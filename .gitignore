@@ -1,0 +1,6 @@
+# WASM build artifacts
+wasm/target/
+
+# Local test artifacts
+_tmp*
+*.log
