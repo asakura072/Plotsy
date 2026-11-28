@@ -117,6 +117,70 @@
     return '\\left(' + tex + '\\right)';
   }
 
+  function pairSavedParentheses(source) {
+    const tokens = /\\(?:(m?left|m?right)\s*(\\(?:[A-Za-z]+|.)|[^\\\s])|(bigg?|Bigg?)[lr]?\s*([()])|[A-Za-z]+|.)|[{}()&]/g;
+    const edits = [];
+    let scope = { openings: [] };
+    let previous = null;
+    let broken = false;
+
+    // Pair literal or manually sized parentheses within each math group.
+    // Leave text, separate fraction arguments, and existing fences independent.
+    for (const match of source.matchAll(tokens)) {
+      const [token, command, delimiter, size, sizedParen] = match;
+      const before = previous;
+      previous = match;
+      if (token === '{') {
+        const startsText = before && /^\\(?:text(?:bf|it|md|normal|rm|sf|sl|tt|up)?|operatorname|mbox)$/.test(before[0]) &&
+          /^\s*\*?\s*$/.test(source.slice(before.index + before[0].length, match.index));
+        scope = { parent: scope, openings: [], literal: scope.literal || startsText, brace: true };
+      } else if (token === '}') {
+        while (scope.parent && !scope.brace) {
+          if (scope.delimiter === '(') broken = true;
+          scope = scope.parent;
+        }
+        if (scope.parent) scope = scope.parent;
+      } else if (!scope.literal) {
+        if (command === 'left' || command === 'mleft') {
+          scope = { parent: scope, openings: [], delimiter };
+        } else if (command === 'right' || command === 'mright') {
+          if (!scope.delimiter) {
+            if (delimiter === ')') broken = true;
+            continue;
+          }
+          if ((scope.delimiter === '(' && delimiter === '.') ||
+              (scope.delimiter === '.' && delimiter === ')')) broken = true;
+          scope = scope.parent;
+        } else if (token === '&' || token === '\\\\') {
+          scope.openings.length = 0;
+        } else if ((sizedParen || token) === '(') {
+          scope.openings.push(match);
+        } else if ((sizedParen || token) === ')') {
+          const open = scope.openings.pop();
+          if (!open) {
+            if (scope.delimiter === '(') broken = true;
+          } else if (!size || open[3] !== size) {
+            edits.push([open, '\\left('], [match, '\\right)']);
+          }
+        }
+      }
+    }
+    while (scope.parent) {
+      if (scope.delimiter === '(') broken = true;
+      scope = scope.parent;
+    }
+    if (!edits.length) return { latex: source, broken };
+
+    let start = 0;
+    const parts = [];
+    for (const [match, replacement] of edits.sort(([a], [b]) => a.index - b.index)) {
+      parts.push(source.slice(start, match.index), replacement);
+      start = match.index + match[0].length;
+    }
+    parts.push(source.slice(start));
+    return { latex: parts.join(''), broken };
+  }
+
   function factorLatex(node) {
     const tex = astToLatex(node);
     if (node.type === 'binary' && (node.op === '+' || node.op === '-' || node.op === '*')) return wrap(tex);
@@ -346,6 +410,7 @@
   Plotsy.latex = {
     toLatex,
     astToLatex,
+    pairSavedParentheses,
     renderToString,
     renderElement,
     renderStatic

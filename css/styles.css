@@ -2647,6 +2647,15 @@ dialog.confirm-modal[open] {
     border-bottom: 1px solid var(--line);
   }
 
+  .app {
+    transition: none;
+  }
+
+  .keypad-open .graph-pane {
+    height: min(50%, max(0px, calc(100% - 210px)));
+    min-height: 0;
+  }
+
   .sidebar {
     min-height: 0;
     border-right: 0;
@@ -2863,6 +2872,16 @@ dialog.confirm-modal[open] {
 
   .toast {
     bottom: 14px;
+  }
+}
+
+@media (max-width: 760px) and (max-height: 400px) {
+  .graph-pane {
+    min-height: 0;
+  }
+
+  .keypad-open .sidebar-head {
+    display: none;
   }
 }
 

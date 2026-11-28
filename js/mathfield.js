@@ -368,7 +368,7 @@
       field.defaultMode = 'math';
       field.smartMode = false;
       field.smartFence = true;
-      field.smartSuperscript = true;
+      field.smartSuperscript = false;
       field.letterShapeStyle = 'tex';
       field.menuItems = [];
       field.placeholder = '\\text{' + (Plotsy.i18n ? Plotsy.i18n.t('输入表达式') : '输入表达式') + '}';

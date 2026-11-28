@@ -79,6 +79,80 @@ function mathLatex(field) {
   return field.evaluate((editor) => editor.getValue('latex'));
 }
 
+async function testPairedParentheses(page, url) {
+  const errors = await openApp(page, url);
+  const field = page.locator('.formula-line math-field');
+  const raw = '((3)/(1.2)x)^2+(3y-((3)/(1.2)x^2)^(((1)/(3))))^2=9';
+  let previousId = await page.locator('.expr-card').getAttribute('data-id');
+  for (const savedLatex of [
+    '',
+    '\\left(\\frac{3}{1.2}x\\right.)^2+(3y-(\\frac{3}{1.2}x^2)^{(\\frac{1}{3})})^2=9',
+    '\\biggl(\\frac{3}{1.2}x)^2+(3y-(\\frac{3}{1.2}x^2)^{(\\frac{1}{3})})^2=9'
+  ]) {
+    const records = ['plotsy 1', 'expr ' + JSON.stringify(raw)];
+    if (savedLatex) records.push('  latex ' + JSON.stringify(savedLatex));
+    await page.locator('#fileInput').setInputFiles({
+      name: 'Parentheses.psy', mimeType: 'text/plain', buffer: Buffer.from(records.join('\n') + '\n')
+    });
+    await page.waitForFunction((id) => document.querySelector('.expr-card')?.dataset.id !== id, previousId);
+    previousId = await page.locator('.expr-card').getAttribute('data-id');
+    await paintFrame(page);
+    assert.match(await mathLatex(field), /^\\left\(\\frac\{3\}\{1\.2\}x\\right\)\^/);
+    const pairs = await field.evaluate((editor) => [...editor.shadowRoot.querySelectorAll('.ML__left-right')]
+      .map((fence) => {
+        const left = [...fence.children].find((node) => node.textContent === '(');
+        const right = [...fence.children].find((node) => node.textContent === ')');
+        return [left, right].map((node) => node?.getBoundingClientRect().height);
+      }));
+    assert.ok(pairs.length >= 3);
+    assert.ok(pairs.every(([left, right]) => left > 0 && left === right), JSON.stringify(pairs));
+    assert.ok(await hasBlueCurveAt(page, 0, 1), 'The imported curve must still pass through (0, 1).');
+  }
+  await page.locator('#toast').waitFor({ state: 'hidden' });
+  const viewport = page.viewportSize();
+  await page.setViewportSize({ width: 560, height: 900 });
+  await paintFrame(page);
+  await screenshot(page, 'plotsy-matched-parentheses');
+  await page.setViewportSize(viewport);
+  await paintFrame(page);
+
+  const original = (await mathLatex(field)).replace(/\s+/g, '');
+  await field.click();
+  await field.evaluate((editor) => {
+    for (let offset = 1; offset <= editor.lastOffset; offset += 1) {
+      if (editor.getElementInfo(offset).latex !== 'x') continue;
+      editor.position = offset;
+      break;
+    }
+  });
+  await page.keyboard.press('Backspace');
+  assert.match(await mathLatex(field), /^\\left\(\\frac\{3\}\{1\.2\}\\right\)\^/);
+  await page.keyboard.type('x');
+  assert.equal((await mathLatex(field)).replace(/\s+/g, ''), original);
+
+  const fraction = page.locator('#keypad button[title="分数"]');
+  const open = page.locator('#keypad button[data-symbol-latex="("]');
+  const close = page.locator('#keypad button[data-symbol-latex=")"]');
+  for (const [openOnScreen, closeOnScreen] of [[false, true], [true, false], [true, true]]) {
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Backspace');
+    if (openOnScreen) await open.click();
+    else await page.keyboard.type('(');
+    await fraction.click();
+    await page.keyboard.type('3');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('1.2');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.type('x');
+    if (closeOnScreen) await close.click();
+    else await page.keyboard.type(')');
+    await page.keyboard.type('^2');
+    assert.match(await mathLatex(field), /^\\left\(\\frac\{3\}\{1\.2\}x\\right\)\^(?:2|\{2\})$/);
+  }
+  assert.deepEqual(errors, []);
+  console.log('PASS  paired parentheses in loaded formulas, safe deletion, and mixed physical/virtual brackets');
+}
+
 async function testFunctionDeletion(page, url) {
   const errors = await openApp(page, url);
   const field = page.locator('.formula-line math-field');
@@ -318,7 +392,10 @@ async function testSavePicker(page) {
   await page.getByText('High-resolution PNG exported.', { exact: true }).waitFor();
   const { calls, writes } = await page.evaluate(() => window.testSavePicker);
   assert.deepEqual(calls.map(({ active }) => active), [true, true]);
-  assert.deepEqual(calls[0].options.types[0].accept, { 'application/octet-stream': ['.psy'] });
+  assert.equal(calls[0].options.excludeAcceptAllOption, true);
+  assert.deepEqual(calls[0].options.types.map(({ accept }) => accept), [
+    { 'application/x-plotsy-project': ['.psy'] }
+  ]);
   assert.deepEqual(calls[1].options.types[0].accept, { 'image/png': ['.png'] });
   assert.match(calls[0].options.suggestedName, /^plotsy-.*\.psy$/);
   assert.match(calls[1].options.suggestedName, /^plotsy-.*\.png$/);
@@ -708,6 +785,29 @@ async function testWorkspace(page, url) {
   await page.keyboard.press('Backspace');
 
   const fractionTemplate = '\\frac{\\placeholder{}}{\\placeholder{}}';
+  await page.keyboard.type('x^2+3');
+  assert.equal(await mathLatex(fields.last()), 'x^{2+3}');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.type('+4');
+  assert.equal(await mathLatex(fields.last()), 'x^{2+3}+4');
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('Backspace');
+
+  const power = main.getByRole('button', { name: 'Superscript / power', exact: true });
+  for (const key of [divide, fraction]) {
+    await page.keyboard.type('x');
+    await power.click();
+    await main.locator('button[data-symbol-latex="2"]').click();
+    await multiply.click();
+    await key.click();
+    await page.keyboard.type('3');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('4');
+    assert.match(await mathLatex(fields.last()), /^x\^\{2\\cdot\s*\\frac(?:3|\{3\})(?:4|\{4\})\}$/);
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Backspace');
+  }
+
   for (const key of [divide, fraction]) {
     await key.click();
     assert.equal(await mathLatex(fields.last()), fractionTemplate);
@@ -877,6 +977,15 @@ async function testMobile(page, url) {
   await page.locator('#colorGrid button').first().tap();
   await page.locator('math-field').first().tap();
   await page.locator('#keypad').waitFor();
+  const waitForVisibleEditor = () => page.waitForFunction(() => {
+    const field = document.activeElement;
+    if (field?.tagName !== 'MATH-FIELD') return false;
+    const editor = field.getBoundingClientRect();
+    const list = field.closest('.sidebar-scroll').getBoundingClientRect();
+    const keypad = document.querySelector('#keypad').getBoundingClientRect();
+    return editor.top >= list.top - 1 && editor.bottom <= Math.min(list.bottom, keypad.top) + 1;
+  });
+  await waitForVisibleEditor();
   const editingControlsFit = () => page.locator('.keypad-controls').evaluate((controls) => {
     const keypad = controls.closest('.keypad-panel').getBoundingClientRect();
     const { top, bottom, left, right } = controls.getBoundingClientRect();
@@ -900,6 +1009,18 @@ async function testMobile(page, url) {
   await waitForCount(page, 3);
   await page.waitForFunction(() => document.activeElement === document.querySelector('.expr-card:last-child .formula-line math-field'));
   assert.equal(await mathLatex(page.locator('.formula-line math-field').last()), '');
+  await page.setViewportSize({ width: 320, height: 568 });
+  await waitForVisibleEditor();
+  await page.getByRole('tab', { name: 'Keypad', exact: true }).tap();
+  await page.keyboard.type('y=x^2');
+  await page.locator('#keypad button[data-symbol-latex="+"]').tap();
+  await page.locator('#keypad button[data-symbol-latex="3"]').tap();
+  assert.equal(await mathLatex(page.locator('.formula-line math-field').last()), 'y=x^{2+3}');
+  await waitForVisibleEditor();
+  await screenshot(page, 'plotsy-mobile-short-editing');
+  await page.setViewportSize({ width: 640, height: 360 });
+  await waitForVisibleEditor();
+  await screenshot(page, 'plotsy-mobile-landscape-editing');
   assert.deepEqual(errors, []);
   console.log('PASS  mobile layout, touch trace, color dot tap/hold, and LaTeX keypad');
 }
@@ -927,6 +1048,12 @@ async function run() {
     page = await browser.newPage({ viewport: { width: 1366, height: 900 }, reducedMotion: 'reduce' });
     page.setDefaultTimeout(8000);
     await testShortcuts(page, url);
+    await page.close();
+
+    stage = 'parentheses';
+    page = await browser.newPage({ viewport: { width: 1366, height: 900 }, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(8000);
+    await testPairedParentheses(page, url);
     await page.close();
 
     stage = 'error-functions';

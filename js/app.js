@@ -860,12 +860,8 @@
       activeExpressionId = expression.id;
       activeBoundKey = boundKey;
       setKeypad(true);
-      window.requestAnimationFrame(() => {
-        local.card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      });
-      window.setTimeout(() => {
-        local.card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      }, 220);
+      const field = boundKey ? local.boundFields[boundKey] : local.field;
+      window.requestAnimationFrame(() => keepEditorVisible(field));
     }
 
     function leaveMathField() {
@@ -1018,17 +1014,20 @@
   }
 
   function writeExpressionField(local, expression) {
-    let latex = expression.latex || '';
+    const paired = Plotsy.latex.pairSavedParentheses(expression.latex || '');
+    let latex = paired.latex;
 
-    if (!latex) {
+    // Recover a damaged saved fence from the expression used to draw the graph.
+    if (!latex || (paired.broken && !latex.includes('\\placeholder'))) {
       let analysis = null;
       if (expression.raw && expression.raw.trim()) {
         try { analysis = Plotsy.expr.analyze(expression.raw, expression); } catch (error) { analysis = null; }
       }
-      latex = Plotsy.mathfield.latexFromExpression(expression, analysis);
-      expression.latex = latex;
+      if (!latex) latex = Plotsy.mathfield.latexFromExpression(expression, analysis);
+      else if (analysis) latex = Plotsy.latex.toLatex(analysis) || latex;
     }
 
+    expression.latex = latex;
     Plotsy.mathfield.setLatex(local.field, latex, { focus: false });
     if (!String(expression.raw || '').trim() && latex.trim()) {
       syncExpressionFromField(expression, local);
@@ -1675,6 +1674,13 @@
     if (keypadOpen) setKeypadTab(activeKeypadTab);
   }
 
+  function keepEditorVisible(field = document.activeElement) {
+    if (!keypadOpen || field !== document.activeElement || field?.tagName !== 'MATH-FIELD') return;
+    const card = field.closest('.expr-card');
+    const target = card && card.offsetHeight <= refs.sidebarScroll.clientHeight ? card : field;
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
   function ensureFieldTarget() {
     if (!state || !Plotsy.mathfield || !Plotsy.mathfield.available) return null;
     const expression = findExpression(activeExpressionId);
@@ -1692,7 +1698,7 @@
     if (target.boundKey) syncBoundFromField(target.expression, target.local, target.boundKey);
     else syncExpressionFromField(target.expression, target.local);
     queueRefresh();
-    target.local.card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    keepEditorVisible(target.field);
   }
 
   function insertSymbolLatex(latex, selectPlaceholder) {
@@ -1799,7 +1805,7 @@
     }
     const insertButton = event.target.closest('[data-symbol-latex]');
     if (insertButton) {
-      if (/^[A-Za-z0-9]$/.test(insertButton.dataset.symbolLatex)) {
+      if (/^[A-Za-z0-9()]$/.test(insertButton.dataset.symbolLatex)) {
         const target = ensureFieldTarget();
         if (!target) return;
         Plotsy.mathfield.typeCharacter(target.field, insertButton.dataset.symbolLatex);
@@ -1976,7 +1982,8 @@
     }
     return saveExport({
       extension: projectFile.extension,
-      type: 'application/octet-stream',
+      // Chromium adds extensions associated with the picker's MIME type.
+      type: 'application/x-plotsy-project',
       description: 'Plotsy 存档',
       createBlob: () => blob,
       successMessage: '已导出 Plotsy 存档。',
@@ -2307,7 +2314,12 @@
     window.addEventListener('resize', () => {
       updateScaleReadout();
       if (graph) graph.resize();
+      keepEditorVisible();
       if (!refs.colorPopover.hidden) positionColorPopover();
+    });
+
+    refs.app.addEventListener('transitionend', (event) => {
+      if (event.target === refs.app && event.propertyName === 'padding-bottom') keepEditorVisible();
     });
 
     refs.sidebarScroll.addEventListener('scroll', closeColorPopover, { passive: true });

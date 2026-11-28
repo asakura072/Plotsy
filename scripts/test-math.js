@@ -60,6 +60,23 @@ test('MathLive restrictions reach the Cartesian plot compiler', () => {
   assert.match(latex.toLatex(expr.analyze('f(x)=x{x>1}')), /^f\(x\)\s*=/u);
 });
 
+test('loaded parentheses pair within math groups and preserve the expression', () => {
+  const source = '\\biggl(\\frac{3}{1.2}x)^2+(3y-(\\frac{3}{1.2}x^2)^{(\\frac{1}{3})})^2=9';
+  const paired = latex.pairSavedParentheses(source);
+  assert.equal(paired.broken, false);
+  assert.equal(
+    paired.latex,
+    '\\left(\\frac{3}{1.2}x\\right)^2+\\left(3y-\\left(\\frac{3}{1.2}x^2\\right)^{\\left(\\frac{1}{3}\\right)}\\right)^2=9'
+  );
+  assert.equal(convertLatexToAsciiMath(paired.latex), convertLatexToAsciiMath(source));
+  assert.deepEqual(latex.pairSavedParentheses(paired.latex), paired);
+  for (const literal of ['\\text{Use (plain text)}', '\\frac{(x+1}{2)}', '\\bigl(x\\bigr)', '\\left|x\\right|']) {
+    assert.deepEqual(latex.pairSavedParentheses(literal), { latex: literal, broken: false });
+  }
+  assert.equal(latex.pairSavedParentheses('\\left(\\frac{3}{1.2}x\\right.)^2').broken, true);
+  assert.equal(latex.pairSavedParentheses('\\left(\\frac{3}{1.2}x)^2\\right)').broken, true);
+});
+
 test('free slider variables and dependencies work in any order', () => {
   assert.deepEqual(prepare('y=mx+b').results[0].missingVariables, ['m', 'b']);
   const { scope, drawables: [line] } = prepare(
